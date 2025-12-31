@@ -1,11 +1,11 @@
-# ESP32-Buck-Boost-MPPT-Battery-Charger
+# ESP32 Buck-Boost MPPT Battery Charger
 
-> This project is NOT MAINTAINED nor a finished device. With a few [fixes](placeholder for "Neccesary fixes") a prototype was tested to output a voltage, but the firmware isn't even finished to do anything else yet.
+> This project is NOT MAINTAINED nor a finished device. With a few [fixes](#neccesary-fixes) a prototype was tested to output a voltage, but the firmware isn't even finished to do anything else yet.
 
 A battery charger in the spirit of [Fugo - 1kW Arduino MPPT Solar Charger](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/).
 The main difference is that it's a four-switch buck-boost converter, meaning you can charge batteries below AND above your PV-panels voltage.
 
-+++spaceholder for image+++
+![image_project](/images/image_project-1.jpg)
 
 ## Features:
 - 4-way buck-boost stage
@@ -47,7 +47,7 @@ Backflow current shouldn't be an issue wither with an H-Bridge. Neither when bat
 ## Inductor
 The inductor is self-wound. Depending on what voltage/current your setup runs, you would want to calculate the ideal inductivity.
 Instead of the original "Magnetics Inc. 0077071A7" I used a cheaper alternative "CS330060" from aliexpress.
-My (shizophrenic!) notes on them are [here](Placeholder for Inductor Dimensions.md). I have no clue what I'm doing! There are likely mistakes!
+My (shizophrenic!) notes on them are [here](/documentation/Inductor Dimensions.md). I have no clue what I'm doing! There are likely mistakes!
 
 **My inductor used:**
 - 3 strands of 16AWG copper wire, each ca. 1.29mm diameter, total crosssection ca. 4.1mm² 
@@ -87,17 +87,18 @@ While i still had access to fancy industrial measurement equipment I measured th
 	- choke filter for logic power supply
 	- don't use just a potentiometer (R20) for voltage feedback - if the wiper has no contact with the resistive element, it may be pulled up to a voltage high enough to destroy the IC pin it's connected to! try to use poti alongside fixed resistor-divider in case of poti failure
 - change `C14` to 100V
-- change value of `R9` (25k is hard to find, I had to stack 2x50k in parallel)
+- change value of `R9` (25k is hard to find, I had to [stack](/images/image_project-2.jpg) 2x50k in parallel)
 - change value of `R12`, `R13` (5kOhm is hard to find)
 - change `C17`, `C18`, `C19`, `C20` (25V instead of 50V is plenty)
 - clearly label PV and Battery terminal on silkscreen
+- reposition the OLED mounting holes
 
 ## Neccesary fixes
 The current schematic/layout has some major oopsies!
-- [3.3V power rail](placeholder for 3v3-vin_shorted.PNG) is routed through a 80V power plane
-	- i cut the [trace](spaceholder for fixes_cut_traces.png) with an x-acto knife & [bridged it with wire](placeholder for fixes_wirebridges.JPG)
+- [3.3V power rail](/images/3v3-vin_shorted.PNG) is routed through a 80V power plane
+	- i cut the [trace](/images/fixes_cut_traces.png) with an x-acto knife & [bridged it with wire](/images/fixes_wirebridges.JPG)
 - the boost-stage gate-driver signals were connected to ESP32 GPIO 36 & 39 (Input only)
-	- cut the [traces](spaceholder for fixes_cut_traces.png) & [wire](placeholder for fixes_wirebridges.JPG) to GPIO 25 & 26 instead
+	- cut the [traces](/images/fixes_cut_traces.png) & [wire](/images/fixes_wirebridges.JPG) to GPIO 25 & 26 instead
 
 ## Testpoints
 **Top side:**
@@ -151,7 +152,7 @@ No MPPT algorithm or anything else is yet implemented.
 	- Testpoint `TP1` should measure 4V
 	- change power supply:
 	- <5.0V and `TP1` should measure 0V
-	- >5.6V and `TP1` should measure 4V again
+	- \>5.6V and `TP1` should measure 4V again
 	- close the jumper `JP1`
 > Only solder jumpers with the power supply off!
 - put power supply back to 12V
