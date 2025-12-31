@@ -1,0 +1,222 @@
+/*
+*     for WROOM32
+*     
+*     - calculates & adjusts PWM Dutycycle to reach the output voltage
+*     - Dont Press SELECT Button for Buck Converter (5V Output)
+*     - Press SELECT Button for Boost Converter (24V Output)
+*     - Current sense factor = 0,625 OR 1,6
+*     - Voltage factor = 0,0248659191 OR 40,2156863
+*/
+
+#include <Arduino.h>
+#include <Wire.h>
+#include <SPI.h>
+#include "ADS1X15.h"
+ADS1015 ADS(0x48, &Wire);             // initialize ADS1115 on I2C bus 1 with I2C address 0x48
+
+// Pin Definitions
+#define GPIO_BTN_SEL      17          // Buttons
+#define GPIO_BTN_BACK     5
+#define GPIO_BTN_DOWN     18
+#define GPIO_BTN_UP       19
+#define GPIO_PWM_BUCK     12          // MOSFET Driver
+#define GPIO_EN_BUCK      18
+#define GPIO_PWM_BOOST    26
+#define GPIO_EN_BOOST     27
+#define GPIO_I2C_ADC_CLK  22          // I2C Pins
+#define GPIO_I2C_ADC_SDA  23
+
+// User Parameters
+int
+PWM_FREQ_a              = 39062,      // Active switching PWM Frequency
+PWM_RES_a               = 11,         // Active switching PWM Resolution (in bits)
+PWM_FREQ_b              = 1000,       // Always-on PWM Frequency
+PWM_RES_b               = 12,         // Always-on PWM Resolution (in bits)
+V_BUCK                  = 5.0000,     // Target Output Voltage - Step Up Converter
+V_BOOST                 = 24.0000;    // Target Output Voltage - Step Down Converter
+// Calibration Parameters
+float
+A0DivRatio              = 1.6000,     // voltage divider sensor ratio (change this value to calibrate voltage sensor)
+A1DivRatio              = 1.6000,
+A2DivRatio              = 40.2157,
+A3DivRatio              = 40.2157,
+PWM_DutyCycle_b         = 99.5000,     // Always-on PWM Dutycycle (in percent)
+PWM_max                 = 98.0000,    // Maximum PWM Dutycycle (in %)
+PWM_min                 = 2.0000;     // Minimum PWM Dutycycle (in %)
+// System Parameters   (upper case = converted to decimal)
+int
+PWM_CH_BUCK             = 0,          // PWM Channel Buck-stage
+PWM_CH_BOOST            = 2,          // PWM Channel Buck-stage
+PWM_RES_A               = 0,          // Active switching PWM Resolution (in decimal)
+PWM_DutyCycle_A         = 0,          // Active switching PWM Dutycycle (in decimal)
+PWM_RES_B               = 0,          // Always-on PWM Resolution (in decimal)
+PWM_DutyCycle_B         = 0,          // Always-on PWM Dutycycle (in decimal)
+PWM_MAX                 = 0,          // Maximum PWM Dutycycle (in decimal)
+PWM_MIN                 = 0;          // Minimum PWM Dutycycle (in decimal)
+float
+PWM_DutyCycle_a         = 0.0000,     // Active switching PWM Dutycycle (in percent)
+A0_RAW                  = 0.0000,     // Raw ADC voltages
+A1_RAW                  = 0.0000,
+A2_RAW                  = 0.0000,
+A3_RAW                  = 0.0000,
+I_IN                    = 0.0000,     // Actual measured Input Current
+I_OUT                   = 0.0000,     // Actual measured Output Current
+V_OUT                   = 6.0000,     // Actual measured Output Voltage
+V_IN                    = 12.0000;     // Actual measured Input Voltage
+
+void PWM_calculations();
+void read_ADC_values();
+void buck_mode();
+void buck_mode_configure();
+void boost_mode();
+void boost_mode_configure();
+
+
+
+void setup() {
+  // Button Pins
+  pinMode(GPIO_BTN_SEL, INPUT);
+  pinMode(GPIO_BTN_SEL, INPUT_PULLDOWN);
+  pinMode(GPIO_BTN_BACK, INPUT);
+  pinMode(GPIO_BTN_BACK, INPUT_PULLDOWN);
+  pinMode(GPIO_BTN_UP, INPUT);
+  pinMode(GPIO_BTN_UP, INPUT_PULLDOWN);
+  pinMode(GPIO_BTN_DOWN, INPUT);
+  pinMode(GPIO_BTN_DOWN, INPUT_PULLDOWN);
+
+  // MOSFET Driver Pins
+  pinMode(GPIO_EN_BUCK, OUTPUT);                // Enable Pins
+  digitalWrite(GPIO_EN_BUCK, LOW);
+  pinMode(GPIO_EN_BOOST, OUTPUT);
+  digitalWrite(GPIO_EN_BOOST, LOW);
+  pinMode(GPIO_PWM_BUCK, OUTPUT);               // PWM Pins
+  ledcAttachPin(GPIO_PWM_BUCK, PWM_CH_BUCK);
+  pinMode(GPIO_PWM_BOOST, OUTPUT);
+  ledcAttachPin(GPIO_PWM_BOOST, PWM_CH_BOOST);
+
+  // Initialize serial interface
+  Serial.begin(115200);
+  Serial.println("\nSerial Conection established");
+  Serial.println(__FILE__);
+  Serial.print("ADS1X15_LIB_VERSION: ");
+  Serial.println(ADS1X15_LIB_VERSION);
+
+  // Initialize I2C bus
+  Wire.begin(GPIO_I2C_ADC_SDA, GPIO_I2C_ADC_CLK);
+  Wire.setClock(100000);
+  
+  // Initialize ADS1X15 library
+  ADS.begin();
+  ADS.setGain(1);         // ±4.096V
+  ADS.setMode(1);         // continuous
+  ADS.setDataRate(4);     // 1600 samples/s
+  
+  if (!ADS.isConnected()) {
+    Serial.println("\nADS1x15 not connected :c");
+  }
+  else{
+    Serial.println("\nADS1x15 connected :D");
+  }
+
+  delay(1000);
+}
+
+
+void loop() {
+  PWM_calculations();
+  
+  if(digitalRead(GPIO_BTN_SEL) == 0){
+    Serial.println("Configuring Buck Mode... ");
+    buck_mode_configure();
+
+    while(1){
+      read_ADC_values();
+      buck_mode();
+    }
+  }
+
+  else{
+    Serial.println("Configuring Boost Mode... ");
+    boost_mode_configure();
+
+    while(1){
+      Serial.println("\nReading ADC voltages... ");
+      read_ADC_values();
+
+      boost_mode();
+    }
+  }
+}
+
+
+
+void PWM_calculations(){
+  // Calculate Dutycycle steps (2 by the power of resolution-in-bits)
+  PWM_RES_A = pow(2, PWM_RES_a) - 1;
+  PWM_RES_B = pow(2, PWM_RES_b) - 1;
+  // Calculate Min/Max Dutycycle
+  PWM_MIN = PWM_RES_A * PWM_min / 100;
+  PWM_MAX = PWM_RES_A * PWM_max / 100;
+}
+
+void read_ADC_values(){
+  // Read voltages
+  A0_RAW = ADS.readADC(0);
+  A1_RAW = ADS.readADC(1);
+  A2_RAW = ADS.readADC(2);
+  A3_RAW = ADS.readADC(3);
+
+  // Convert voltages
+  I_IN = ADS.toVoltage(A0_RAW) * A0DivRatio;
+  I_OUT = ADS.toVoltage(A1_RAW) * A1DivRatio;
+  V_OUT = ADS.toVoltage(A2_RAW) * A2DivRatio;
+  V_IN = ADS.toVoltage(A3_RAW) * A3DivRatio;
+}
+
+void buck_mode_configure(){
+  // Configre PWM for buck-stage: PWM switching
+  ledcSetup(PWM_CH_BUCK, PWM_FREQ_a, PWM_RES_a);
+  ledcWrite(PWM_CH_BUCK, 0);
+  digitalWrite(GPIO_EN_BUCK, HIGH);
+
+  // Configure PWM for buck-stage: Always on
+  ledcSetup(PWM_CH_BOOST, PWM_FREQ_b, PWM_RES_b);
+  PWM_DutyCycle_B = PWM_RES_B * PWM_DutyCycle_b / 100;
+  ledcWrite(PWM_CH_BOOST, PWM_DutyCycle_B);
+  digitalWrite(GPIO_EN_BOOST, HIGH);
+
+  // calculate first PWM dutycycle   (Dutycycle% = TargetOutputVoltage / InputVoltage)
+  PWM_DutyCycle_A = PWM_RES_A * ( V_BUCK / V_IN );
+  ledcWrite(PWM_CH_BUCK, PWM_DutyCycle_A);
+}
+
+void buck_mode(){
+  // calculate PWM dutycycle   (NewDutycycle% = LastDutycycle% * ( TargetOutputVoltage / ActualOutputVoltage) )
+  PWM_DutyCycle_A = PWM_DutyCycle_A * ( V_BUCK / V_OUT );
+  PWM_DutyCycle_A = constrain(PWM_DutyCycle_A , PWM_MIN, PWM_MAX);
+  ledcWrite(PWM_CH_BUCK, PWM_DutyCycle_A);
+}
+
+void boost_mode_configure(){
+  // Configre PWM for buck-stage: PWM switching
+  ledcSetup(PWM_CH_BOOST, PWM_FREQ_a, PWM_RES_a);
+  ledcWrite(PWM_CH_BOOST, 0);
+  digitalWrite(GPIO_EN_BOOST, HIGH);
+
+  // Configure PWM for buck-stage: Always on
+  ledcSetup(PWM_CH_BUCK, PWM_FREQ_b, PWM_RES_b);
+  PWM_DutyCycle_B = PWM_RES_B * PWM_DutyCycle_b / 100;
+  ledcWrite(PWM_CH_BUCK, PWM_DutyCycle_B);
+  digitalWrite(GPIO_EN_BUCK, HIGH);
+
+  // calculate first PWM dutycycle   (Dutycycle% = 1 - ( InputVoltage / TargetOutputVoltage ) )
+  PWM_DutyCycle_A = PWM_RES_A * ( 1 - ( V_IN / V_BOOST ) );
+  ledcWrite(PWM_CH_BOOST, PWM_DutyCycle_A);
+}
+
+void boost_mode(){
+  // calculate PWM dutycycle   (NewDutycycle% = LastDutycycle% * ( ( TargetOutputVoltage / ActualOutputVoltage ) ^ 2 )
+  PWM_DutyCycle_A = PWM_DutyCycle_A * pow(V_BOOST / V_OUT, 2);
+  PWM_DutyCycle_A = constrain(PWM_DutyCycle_A , PWM_MIN, PWM_MAX);
+  ledcWrite(PWM_CH_BOOST, PWM_DutyCycle_A);
+}
